@@ -89,8 +89,8 @@ class AnnBits:
     (RESERVED, DATA) = range(AnnRegs.DATA + 1, (AnnRegs.DATA + 1) + 2)
 
 
-class AnnStrings:
-    """Enumeration of annotations for formatted strings."""
+class AnnInfo:
+    """Enumeration of annotations for various information."""
 
     (
         WARN, BADADD, CHECK, WRITE, READ,
@@ -121,9 +121,17 @@ reg_annots = {  # Convert device register value to annotation index
 }
 
 radixes = {  # Convert radix option to format mask
-    "HEX": "{:#02x}",
-    "DEC": "{:#d}",
-    "OCT": "{:#o}",
+    "Hex": "{:#02x}",
+    "Dec": "{:#d}",
+    "Oct": "{:#o}",
+}
+
+params = {
+    "MTREG_TYP": 69,
+    "ACCURACY_TYP": 1.20,    # Count per lux
+    "ACCURACY_MAX": 1.44,
+    "ACCURACY_MIN": 0.96,
+    "UNIT_LIGHT": "lx",
 }
 
 ###############################################################################
@@ -168,19 +176,22 @@ bits = {
     AnnBits.DATA: ["MT bit", "MT", "M"],
 }
 
-strings = {
-    AnnStrings.WARN: ["Warnings", "Warn", "W"],
-    AnnStrings.BADADD: ["Uknown slave address", "Unknown address", "Uknown",
+info = {
+    AnnInfo.WARN: ["Warnings", "Warn", "W"],
+    AnnInfo.BADADD: ["Uknown slave address", "Unknown address", "Uknown",
                         "Unk", "U"],
-    AnnStrings.CHECK: ["Slave presence check", "Slave check", "Check",
+    AnnInfo.CHECK: ["Slave presence check", "Slave check", "Check",
                        "Chk", "C"],
-    AnnStrings.WRITE: ["Write", "Wr", "W"],
-    AnnStrings.READ: ["Read", "Rd", "R"],
-    AnnStrings.LIGHT: ["Ambient light", "Light", "L"],
-    AnnStrings.MTREG: ["Measurement time register", "MTreg", "R"],
-    AnnStrings.MTIME: ["Measurement time", "MTime", "MT", "T"],
+    AnnInfo.WRITE: ["Write", "Wr", "W"],
+    AnnInfo.READ: ["Read", "Rd", "R"],
+    AnnInfo.LIGHT: ["Ambient light", "Light", "L"],
+    AnnInfo.MTREG: ["Measurement time register", "MTreg", "R"],
+    AnnInfo.MTIME: ["Measurement time", "MTime", "MT", "T"],
 }
 
+# def create_annots():
+#     annots = [('addr-' + i.lower(), addresses[i][0]) for i in Address]
+#     return tuple(annots)
 
 ###############################################################################
 # Decoder
@@ -198,8 +209,8 @@ class Decoder(srd.Decoder):
     outputs = ["bh1750"]
 
     options = (
-        {"id": "radix", "desc": "Numbers format", "default": "HEX",
-         "values": ("HEX", "DEC", "OCT")},
+        {"id": "radix", "desc": "Numbers format", "default": "Hex",
+         "values": ("Hex", "Dec", "Oct")},
         {"id": "params", "desc": "Datasheet parameter used",
          "default": "Typical",
          "values": ("Typical", "Maximal", "Minimal")},
@@ -225,14 +236,14 @@ class Decoder(srd.Decoder):
         ("bit-reserved", bits[AnnBits.RESERVED][0]),
         ("bit-data", bits[AnnBits.DATA][0]),
         # Strings
-        ("warnings", strings[AnnStrings.WARN][0]),
-        ("bad-addr", strings[AnnStrings.BADADD][0]),
-        ("check", strings[AnnStrings.CHECK][0]),
-        ("write", strings[AnnStrings.WRITE][0]),
-        ("read", strings[AnnStrings.READ][0]),
-        ("light", strings[AnnStrings.LIGHT][0]),
-        ("mtreg", strings[AnnStrings.MTREG][0]),
-        ("mtime", strings[AnnStrings.MTIME][0]),
+        ("warnings", info[AnnInfo.WARN][0]),
+        ("bad-addr", info[AnnInfo.BADADD][0]),
+        ("check", info[AnnInfo.CHECK][0]),
+        ("write", info[AnnInfo.WRITE][0]),
+        ("read", info[AnnInfo.READ][0]),
+        ("light", info[AnnInfo.LIGHT][0]),
+        ("mtreg", info[AnnInfo.MTREG][0]),
+        ("mtime", info[AnnInfo.MTIME][0]),
     )
 
     annotation_rows = (
@@ -240,8 +251,8 @@ class Decoder(srd.Decoder):
         ("regs", "Registers",
             tuple(range(AnnAddrs.GND, AnnRegs.DATA + 1))),
         ("info", "Info",
-            tuple(range(AnnStrings.CHECK, AnnStrings.MTIME + 1))),
-        ("warnings", "Warnings", (AnnStrings.WARN, AnnStrings.BADADD,)),
+            tuple(range(AnnInfo.CHECK, AnnInfo.MTIME + 1))),
+        ("warnings", "Warnings", (AnnInfo.WARN, AnnInfo.BADADD,)),
     )
 
     def __init__(self):
@@ -258,12 +269,13 @@ class Decoder(srd.Decoder):
         self.esd = 0        # End sample of an annotation data block
         self.bits = []      # List of recent processed byte bits
         self.bytes = []     # List of recent processed bytes
-        self.write = True   # Flag about recent write action (default write)
+        self.write = None   # Flag about recent write action
         self.state = "IDLE"
         # Specific parameters for a device
-        self.addr = Address.GND         # Slave address
-        self.reg = Register.PWRDOWN     # Processed register
-        self.mtreg = 69     # MTreg default value (after power up)
+        self.addr = Address.GND             # Slave address
+        self.reg = Register.PWRDOWN         # Processed register
+        self.mode = Register.MCHIGH         # Measurement mode
+        self.mtreg = params["MTREG_TYP"]    # MTreg default value
 
     def start(self):
         """Actions before the beginning of the decoding."""
@@ -382,14 +394,23 @@ class Decoder(srd.Decoder):
         self.put(self.bits[bit_reserved][1], self.bits[bit_reserved][2],
                  self.out_ann, [AnnBits.RESERVED, annots])
 
-    def check_addr(self, addr_slave, check_gencall=False):
-        """Check correct slave address or general call."""
+    def check_addr(self, addr_slave):
+        """Check correct slave address."""
         if addr_slave in (Address.GND, Address.VCC):
             return True
-        annots = self.compose_annot(AnnStrings.BADADD,
+        annots = self.compose_annot(AnnInfo.BADADD,
                                     "{:#04x}".format(self.addr))
-        self.put(self.ssb, self.es, self.out_ann, [AnnStrings.BADADD, annots])
+        self.put(self.ssb, self.es, self.out_ann, [AnnInfo.BADADD, annots])
         return False
+
+    def calculate_sensitivity(self):
+        """Calculate measurement light sensitivity in lux per count."""
+        suffix = self.options["params"][0:3].upper()
+        resolution = params["ACCURACY_" + suffix] * params["MTREG_TYP"] / self.mtreg  # count/lux
+        sensitivity = 1 / resolution  # lux/count
+        if self.mode in [Register.MCHIGH2, Register.MOHIGH2]:
+            sensitivity /= 2
+        return sensitivity
 
     def calculate_light(self, rawdata):
         """Calculate ambient light.
@@ -397,16 +418,15 @@ class Decoder(srd.Decoder):
         Arguments
         ---------
         rawdata : int
-            Content of the temperature, TLOW, or THIGH register.
+            Content of the illuminance data register.
 
         Returns
         -------
-        tuple: float, string
-            Temperature and unit in a scale determined by corresponding decoder
-            option.
+        float
+            Ambient light in lux.
 
         """
-        light = 0
+        light = rawdata * self.calculate_sensitivity()
         return light
 
     def collect_data(self, databyte):
@@ -440,6 +460,7 @@ class Decoder(srd.Decoder):
         if len(self.bytes) == 0 or not self.write:
             return
         self.reg = self.bytes[0]
+        # Handle measurement time registers
         mask_mthigh = ~((1 << (MTregHighBits.MAX + 1)) - 1)
         if (self.reg & mask_mthigh) == Register.MTHIGH:
             self.handle_mtreg_high()
@@ -448,6 +469,9 @@ class Decoder(srd.Decoder):
         if (self.reg & mask_mtlow) == Register.MTLOW:
             self.handle_mtreg_low()
             return
+        # Detect measurement mode registers
+        if self.reg in range(Register.MCHIGH, Register.MOLOW + 1):
+            self.mode = self.reg
         # Registers row
         ann_idx = reg_annots[self.reg]
         annots = self.compose_annot(registers[ann_idx])
@@ -486,28 +510,35 @@ class Decoder(srd.Decoder):
 
     def handle_data(self):
         """Process read data."""
-        # regword = (self.bytes[1] << 8) + self.bytes[0]
         if self.write:
             # Info row
             if self.reg in [Register.MTHIGH, Register.MTLOW]:
                 mtreg = radixes[self.options["radix"]].format(self.mtreg)
+                unit = " ({:.2f} {}/cnt)".format(self.calculate_sensitivity(),
+                                         params["UNIT_LIGHT"])
                 annots = self.compose_annot(
-                    strings[AnnStrings.MTREG],
+                    info[AnnInfo.MTREG],
+                    ann_action=info[AnnInfo.WRITE],
                     ann_value=mtreg,
-                    ann_action=strings[AnnStrings.WRITE]
+                    ann_unit=unit,
                 )
-                self.put(self.ssb, self.es, self.out_ann, [AnnStrings.MTREG,
+                self.put(self.ssb, self.es, self.out_ann, [AnnInfo.MTREG,
                                                            annots])
         else:
+            regword = (self.bytes[1] << 8) + self.bytes[0]
             # Registers row
             annots = self.compose_annot(registers[AnnRegs.DATA])
             self.put(self.ssd, self.esd, self.out_ann, [AnnRegs.DATA, annots])
-            # Info row
+            # # Info row
+            light = "{:.2f}".format(self.calculate_light(regword))
+            unit = " {}".format(params["UNIT_LIGHT"])
             annots = self.compose_annot(
-                strings[AnnStrings.LIGHT],
-                ann_action=strings[AnnStrings.READ]
+                info[AnnInfo.LIGHT],
+                ann_action=info[AnnInfo.READ],
+                ann_value=light,
+                ann_unit=unit,
             )
-            self.put(self.ssb, self.es, self.out_ann, [AnnStrings.LIGHT,
+            self.put(self.ssb, self.es, self.out_ann, [AnnInfo.LIGHT,
                                                        annots])
         self.clear_data()
 
@@ -515,7 +546,7 @@ class Decoder(srd.Decoder):
         """Decode samples provided by parent decoder."""
         cmd, databyte = data
         self.ss, self.es = startsample, endsample
-        # print(cmd, self.state)
+        # print(self.state, cmd)
 
         if cmd == "BITS":
             """Collect packet of bits that belongs to the following command.
@@ -534,23 +565,17 @@ class Decoder(srd.Decoder):
 
         # State machine
         if self.state == "IDLE":
-            """Waiting for an I2C transmissionself.
-            - Wait for start condition.
-            - By start condition a new transmission begins.
-            """
-            if cmd not in ["START", "START REPEAT"]:
+            """Wait for new I2C transmission"""
+            # if cmd not in ["START", "START REPEAT"]:
+            if cmd != "START":
                 return
             self.ssb = self.ss
             self.state = "ADDRESS SLAVE"
 
         elif self.state == "ADDRESS SLAVE":
-            """Wait for a slave address write operation.
-            - Every transmission starts with writing a register pointer
-              to the slave of for general call, so that the slave address
-              should be always followed by the write bit.
-            """
+            """Wait for slave address"""
             if cmd in ["ADDRESS WRITE", "ADDRESS READ"]:
-                if self.check_addr(databyte, True):
+                if self.check_addr(databyte):
                     self.collect_data(databyte)
                     self.handle_addr()
                     if cmd == "ADDRESS READ":
@@ -572,11 +597,9 @@ class Decoder(srd.Decoder):
                 self.state = "IDLE"
 
         elif self.state == "REGISTER DATA":
-            """Process writing or reading data for a slave register.
-            - Repeated Start condition signals, that reading sequence follows
-              starting with slave address.
-            - Subsequent writes signals writing to the slave.
-            - Otherwise Stop condition is expected.
+            """Process data of a slave register.
+            - Individual command or data can end either with repeated start
+              condition or with stop condition.
             """
             if cmd in ["DATA WRITE", "DATA READ"]:
                 self.collect_data(databyte)
