@@ -189,9 +189,26 @@ info = {
     AnnInfo.MTIME: ["Measurement time", "MTime", "MT", "T"],
 }
 
-# def create_annots():
-#     annots = [('addr-' + i.lower(), addresses[i][0]) for i in Address]
-#     return tuple(annots)
+def create_annots():
+    annots = []
+    # Address
+    for attr, value in vars(AnnAddrs).items():
+        if not attr.startswith('__'):
+            annots.append(tuple(["addr-" + attr.lower(), addresses[value][0]]))
+    # Register
+    for attr, value in vars(AnnRegs).items():
+        if not attr.startswith('__'):
+            annots.append(tuple(["reg-" + attr.lower(), registers[value][0]]))
+    # Bits
+    for attr, value in vars(AnnBits).items():
+        if not attr.startswith('__'):
+            annots.append(tuple(["bit-" + attr.lower(), bits[value][0]]))
+    # Info
+    for attr, value in vars(AnnInfo).items():
+        if not attr.startswith('__'):
+            annots.append(tuple(["info-" + attr.lower(), info[value][0]]))
+    return tuple(annots)
+
 
 ###############################################################################
 # Decoder
@@ -216,36 +233,8 @@ class Decoder(srd.Decoder):
          "values": ("Typical", "Maximal", "Minimal")},
     )
 
-    annotations = (
-        # Addresses
-        ("addr-gnd", addresses[AnnAddrs.GND][0]),
-        ("addr-vcc", addresses[AnnAddrs.VCC][0]),
-        # Registers
-        ("reg-down", registers[AnnRegs.PWRDOWN][0]),
-        ("reg-up", registers[AnnRegs.PWRUP][0]),
-        ("reg-reset", registers[AnnRegs.RESET][0]),
-        ("reg-mthigh", registers[AnnRegs.MTHIGH][0]),
-        ("reg-mtlow", registers[AnnRegs.MTLOW][0]),
-        ("reg-mchigh", registers[AnnRegs.MCHIGH][0]),
-        ("reg-mchigh2", registers[AnnRegs.MCHIGH2][0]),
-        ("reg-mclow", registers[AnnRegs.MCLOW][0]),
-        ("reg-mohigh", registers[AnnRegs.MOHIGH][0]),
-        ("reg-mohigh2", registers[AnnRegs.MOHIGH2][0]),
-        ("reg-molow", registers[AnnRegs.MOLOW][0]),
-        # Common bits
-        ("bit-reserved", bits[AnnBits.RESERVED][0]),
-        ("bit-data", bits[AnnBits.DATA][0]),
-        # Strings
-        ("warnings", info[AnnInfo.WARN][0]),
-        ("bad-addr", info[AnnInfo.BADADD][0]),
-        ("check", info[AnnInfo.CHECK][0]),
-        ("write", info[AnnInfo.WRITE][0]),
-        ("read", info[AnnInfo.READ][0]),
-        ("light", info[AnnInfo.LIGHT][0]),
-        ("mtreg", info[AnnInfo.MTREG][0]),
-        ("mtime", info[AnnInfo.MTIME][0]),
-    )
-
+    create_annots()
+    annotations = create_annots()
     annotation_rows = (
         ("bits", "Bits", (AnnBits.RESERVED, AnnBits.DATA)),
         ("regs", "Registers",
