@@ -94,8 +94,8 @@ class AnnInfo:
 
     (
         WARN, BADADD, CHECK, WRITE, READ,
-        LIGHT, MTREG, MTIME,
-    ) = range(AnnBits.DATA + 1, (AnnBits.DATA + 1) + 8)
+        SENSE, LIGHT, MTREG, MTIME,
+    ) = range(AnnBits.DATA + 1, (AnnBits.DATA + 1) + 9)
 
 
 ###############################################################################
@@ -131,7 +131,7 @@ params = {
     "ACCURACY_TYP": 1.20,    # Count per lux
     "ACCURACY_MAX": 1.44,
     "ACCURACY_MIN": 0.96,
-    "UNIT_LIGHT": "lx",
+    "UNIT_LIGHT": "lux",
 }
 
 ###############################################################################
@@ -184,6 +184,7 @@ info = {
                        "Chk", "C"],
     AnnInfo.WRITE: ["Write", "Wr", "W"],
     AnnInfo.READ: ["Read", "Rd", "R"],
+    AnnInfo.SENSE: ["Sensitivity", "Sense", "S"],
     AnnInfo.LIGHT: ["Ambient light", "Light", "L"],
     AnnInfo.MTREG: ["Measurement time register", "MTreg", "R"],
     AnnInfo.MTIME: ["Measurement time", "MTime", "MT", "T"],
@@ -503,16 +504,25 @@ class Decoder(srd.Decoder):
             # Info row
             if self.reg in [Register.MTHIGH, Register.MTLOW]:
                 mtreg = radixes[self.options["radix"]].format(self.mtreg)
-                unit = " ({:.2f} {}/cnt)".format(self.calculate_sensitivity(),
-                                         params["UNIT_LIGHT"])
                 annots = self.compose_annot(
                     info[AnnInfo.MTREG],
-                    ann_action=info[AnnInfo.WRITE],
                     ann_value=mtreg,
-                    ann_unit=unit,
+                    # ann_action=info[AnnInfo.WRITE],
                 )
                 self.put(self.ssb, self.es, self.out_ann, [AnnInfo.MTREG,
                                                            annots])
+            if self.reg in range(Register.MCHIGH, Register.MOLOW + 1):
+                sensitivity = "{:.2f}".format(self.calculate_sensitivity())
+                unit = " {}/cnt".format(params["UNIT_LIGHT"])
+                annots = self.compose_annot(
+                    info[AnnInfo.SENSE],
+                    ann_value=sensitivity,
+                    ann_unit=unit,
+                    # ann_action=info[AnnInfo.WRITE],
+                )
+                self.put(self.ssb, self.es, self.out_ann, [AnnInfo.MTREG,
+                                                           annots])
+
         else:
             regword = (self.bytes[1] << 8) + self.bytes[0]
             # Registers row
@@ -523,9 +533,9 @@ class Decoder(srd.Decoder):
             unit = " {}".format(params["UNIT_LIGHT"])
             annots = self.compose_annot(
                 info[AnnInfo.LIGHT],
-                ann_action=info[AnnInfo.READ],
                 ann_value=light,
                 ann_unit=unit,
+                # ann_action=info[AnnInfo.READ],
             )
             self.put(self.ssb, self.es, self.out_ann, [AnnInfo.LIGHT,
                                                        annots])
