@@ -22,13 +22,13 @@ import sigrokdecode as srd
 
 
 ###############################################################################
-# Enumeration classes
+# Enumeration classes for device parameters
 ###############################################################################
 class Address:
     """Enumeration of possible slave addresses.
 
-    - Device address is determined by a pin, which the sensor's ADD0 pin is
-      physically connected to.
+    - Device address is determined by the sensor's ADD0 pin physical connection
+      to particular power rail.
     """
 
     (GND, VCC) = (0x23, 0x5c)
@@ -66,6 +66,9 @@ class MTregLowBits:
     (MIN, MAX) = (0, 4)
 
 
+###############################################################################
+# Enumeration classes for annotations
+###############################################################################
 class AnnAddrs:
     """Enumeration of annotations for addresses."""
 
@@ -84,13 +87,13 @@ class AnnRegs:
 
 
 class AnnBits:
-    """Enumeration of annotations for configuration bits."""
+    """Enumeration of annotations for bits."""
 
     (RESERVED, DATA) = range(AnnRegs.DATA + 1, (AnnRegs.DATA + 1) + 2)
 
 
 class AnnInfo:
-    """Enumeration of annotations for various information."""
+    """Enumeration of annotations for various strings."""
 
     (
         WARN, BADADD, CHECK, WRITE, READ,
@@ -101,12 +104,12 @@ class AnnInfo:
 ###############################################################################
 # Parameters mapping
 ###############################################################################
-addr_annots = {  # Convert value to annotation index
+addr_annots = {  # Convert address value to annotation index
     Address.GND: AnnAddrs.GND,
     Address.VCC: AnnAddrs.VCC,
 }
 
-reg_annots = {  # Convert device register value to annotation index
+reg_annots = {  # Convert register value to annotation index
     Register.PWRDOWN: AnnRegs.PWRDOWN,
     Register.PWRUP: AnnRegs.PWRUP,
     Register.RESET: AnnRegs.RESET,
@@ -126,7 +129,7 @@ radixes = {  # Convert radix option to format mask
     "Oct": "{:#o}",
 }
 
-params = {
+params = {  # Various device parameters
     "MTREG_TYP": 69,
     "ACCURACY_TYP": 1.20,    # Count per lux
     "ACCURACY_MAX": 1.44,
@@ -179,9 +182,9 @@ bits = {
 info = {
     AnnInfo.WARN: ["Warnings", "Warn", "W"],
     AnnInfo.BADADD: ["Uknown slave address", "Unknown address", "Uknown",
-                        "Unk", "U"],
+                     "Unk", "U"],
     AnnInfo.CHECK: ["Slave presence check", "Slave check", "Check",
-                       "Chk", "C"],
+                    "Chk", "C"],
     AnnInfo.WRITE: ["Write", "Wr", "W"],
     AnnInfo.READ: ["Read", "Rd", "R"],
     AnnInfo.SENSE: ["Sensitivity", "Sense", "S"],
@@ -190,13 +193,15 @@ info = {
     AnnInfo.MTIME: ["Measurement time", "MTime", "MT", "T"],
 }
 
+
 def create_annots():
+    """Create a tuple with all annotation definitions."""
     annots = []
-    # Address
+    # Addresses
     for attr, value in vars(AnnAddrs).items():
         if not attr.startswith('__'):
             annots.append(tuple(["addr-" + attr.lower(), addresses[value][0]]))
-    # Register
+    # Registers
     for attr, value in vars(AnnRegs).items():
         if not attr.startswith('__'):
             annots.append(tuple(["reg-" + attr.lower(), registers[value][0]]))
@@ -396,8 +401,8 @@ class Decoder(srd.Decoder):
     def calculate_sensitivity(self):
         """Calculate measurement light sensitivity in lux per count."""
         suffix = self.options["params"][0:3].upper()
-        resolution = params["ACCURACY_" + suffix] * params["MTREG_TYP"] / self.mtreg  # count/lux
-        sensitivity = 1 / resolution  # lux/count
+        sensitivity = 1 / params["ACCURACY_" + suffix] * params["MTREG_TYP"] \
+            / self.mtreg  # lux/count
         if self.mode in [Register.MCHIGH2, Register.MOHIGH2]:
             sensitivity /= 2
         return sensitivity
@@ -498,6 +503,12 @@ class Decoder(srd.Decoder):
         self.put(self.ssd, self.esd, self.out_ann, [AnnRegs.MTLOW, annots])
         self.clear_data()
 
+    def handle_nodata(self):
+        """Process transmission without any data."""
+        # Info row
+        annots = self.compose_annot(info[AnnInfo.CHECK])
+        self.put(self.ssb, self.es, self.out_ann, [AnnInfo.CHECK, annots])
+
     def handle_data(self):
         """Process read data."""
         if self.write:
@@ -564,15 +575,14 @@ class Decoder(srd.Decoder):
 
         # State machine
         if self.state == "IDLE":
-            """Wait for new I2C transmission"""
-            # if cmd not in ["START", "START REPEAT"]:
+            """Wait for new I2C transmission."""
             if cmd != "START":
                 return
             self.ssb = self.ss
             self.state = "ADDRESS SLAVE"
 
         elif self.state == "ADDRESS SLAVE":
-            """Wait for slave address"""
+            """Wait for slave address."""
             if cmd in ["ADDRESS WRITE", "ADDRESS READ"]:
                 if self.check_addr(databyte):
                     self.collect_data(databyte)
@@ -586,13 +596,14 @@ class Decoder(srd.Decoder):
                     self.state = "IDLE"
 
         elif self.state == "REGISTER ADDRESS":
-            """Process slave register"""
+            """Process slave register."""
             if cmd in ["DATA WRITE", "DATA READ"]:
                 self.collect_data(databyte)
                 self.handle_reg()
                 self.state = "REGISTER DATA"
             elif cmd in ["STOP", "START REPEAT"]:
-                """Wait another transmittion."""
+                """End of transmission without any register and data."""
+                self.handle_nodata()
                 self.state = "IDLE"
 
         elif self.state == "REGISTER DATA":
