@@ -232,14 +232,13 @@ class Decoder(srd.Decoder):
     outputs = ["bh1750"]
 
     options = (
-        {"id": "radix", "desc": "Numbers format", "default": "Hex",
+        {"id": "radix", "desc": "Number format", "default": "Hex",
          "values": ("Hex", "Dec", "Oct")},
         {"id": "params", "desc": "Datasheet parameter used",
          "default": "Typical",
          "values": ("Typical", "Maximal", "Minimal")},
     )
 
-    create_annots()
     annotations = create_annots()
     annotation_rows = (
         ("bits", "Bits", (AnnBits.RESERVED, AnnBits.DATA)),
@@ -439,6 +438,10 @@ class Decoder(srd.Decoder):
         self.bytes = []
         self.bits = []
 
+    def format_data(self, data):
+        """Format data value according to the radix option."""
+        return radixes[self.options["radix"]].format(data)
+
     def handle_addr(self):
         """Process slave address."""
         if len(self.bytes) == 0:
@@ -514,7 +517,7 @@ class Decoder(srd.Decoder):
         if self.write:
             # Info row
             if self.reg in [Register.MTHIGH, Register.MTLOW]:
-                mtreg = radixes[self.options["radix"]].format(self.mtreg)
+                mtreg = self.format_data(self.mtreg)
                 annots = self.compose_annot(
                     info[AnnInfo.MTREG],
                     ann_value=mtreg,
