@@ -199,19 +199,20 @@ def create_annots():
     annots = []
     # Addresses
     for attr, value in vars(AnnAddrs).items():
-        if not attr.startswith('__'):
+        if not attr.startswith('__') and value in addresses:
             annots.append(tuple(["addr-" + attr.lower(), addresses[value][0]]))
     # Registers
     for attr, value in vars(AnnRegs).items():
-        if not attr.startswith('__'):
+        if not attr.startswith('__') and value in registers:
             annots.append(tuple(["reg-" + attr.lower(), registers[value][0]]))
     # Bits
     for attr, value in vars(AnnBits).items():
-        if not attr.startswith('__'):
+        if not attr.startswith('__') and value in bits:
+            print(attr, value)
             annots.append(tuple(["bit-" + attr.lower(), bits[value][0]]))
     # Info
     for attr, value in vars(AnnInfo).items():
-        if not attr.startswith('__'):
+        if not attr.startswith('__') and value in info:
             annots.append(tuple(["info-" + attr.lower(), info[value][0]]))
     return tuple(annots)
 
@@ -393,7 +394,7 @@ class Decoder(srd.Decoder):
         if addr_slave in (Address.GND, Address.VCC):
             return True
         annots = self.compose_annot(AnnInfo.BADADD,
-                                    "{:#04x}".format(self.addr))
+                                    ann_value=self.format_data(self.addr))
         self.put(self.ssb, self.es, self.out_ann, [AnnInfo.BADADD, annots])
         return False
 
@@ -441,6 +442,11 @@ class Decoder(srd.Decoder):
     def format_data(self, data):
         """Format data value according to the radix option."""
         return radixes[self.options["radix"]].format(data)
+
+    def format_action(self):
+        """Format r/w action ."""
+        act_idx = AnnInfo.WRITE if (self.write) else AnnInfo.READ
+        return info[act_idx]
 
     def handle_addr(self):
         """Process slave address."""
@@ -517,11 +523,10 @@ class Decoder(srd.Decoder):
         if self.write:
             # Info row
             if self.reg in [Register.MTHIGH, Register.MTLOW]:
-                mtreg = self.format_data(self.mtreg)
                 annots = self.compose_annot(
                     info[AnnInfo.MTREG],
-                    ann_value=mtreg,
-                    # ann_action=info[AnnInfo.WRITE],
+                    ann_value=self.format_data(self.mtreg),
+                    # ann_action=self.format_action(),
                 )
                 self.put(self.ssb, self.es, self.out_ann, [AnnInfo.MTREG,
                                                            annots])
@@ -532,7 +537,7 @@ class Decoder(srd.Decoder):
                     info[AnnInfo.SENSE],
                     ann_value=sensitivity,
                     ann_unit=unit,
-                    # ann_action=info[AnnInfo.WRITE],
+                    # ann_action=self.format_action(),
                 )
                 self.put(self.ssb, self.es, self.out_ann, [AnnInfo.MTREG,
                                                            annots])
@@ -549,7 +554,7 @@ class Decoder(srd.Decoder):
                 info[AnnInfo.LIGHT],
                 ann_value=light,
                 ann_unit=unit,
-                # ann_action=info[AnnInfo.READ],
+                # ann_action=self.format_action(),
             )
             self.put(self.ssb, self.es, self.out_ann, [AnnInfo.LIGHT,
                                                        annots])
@@ -585,7 +590,7 @@ class Decoder(srd.Decoder):
             self.state = "ADDRESS SLAVE"
 
         elif self.state == "ADDRESS SLAVE":
-            """Wait for slave address."""
+            """Wait for a slave address."""
             if cmd in ["ADDRESS WRITE", "ADDRESS READ"]:
                 if self.check_addr(databyte):
                     self.collect_data(databyte)
