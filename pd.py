@@ -254,23 +254,25 @@ class Decoder(srd.Decoder):
         """Actions before the beginning of the decoding."""
         self.out_ann = self.register(srd.OUTPUT_ANN)
 
-    def putd(self, ss, es, data):
+    def putd(self, sb, eb, data):
         """Span data output across bit range.
 
-        - Output is an annotation block from the start sample of the first
-          bit to the end sample of the last bit.
+        - Because bits are order with MSB first, the output is an annotation
+          block from the last sample of the start bit (sb) to the first sample
+          of the end bit (eb).
+        - The higher bit the lower sample number.
         """
-        self.put(self.bits[ss][1], self.bits[es][2], self.out_ann, data)
+        self.put(self.bits[eb][1], self.bits[sb][2], self.out_ann, data)
 
-    def putb(self, start, end=None, ann=AnnBits.RESERVED):
+    def putb(self, sb, eb=None, ann=AnnBits.RESERVED):
         """Span special bit annotation across bit range bit by bit.
 
         Arguments
         ---------
-        start : integer
-            Number of the first annotated bit counting from 0.
-        end : integer
-            Number of the bit right after the last annotated bit
+        sb : integer
+            Number of the annotated start bit counting from 0.
+        eb : integer
+            Number of the end bit right after the last annotated bit
             counting from 0. If none value is provided, the method uses
             start value increased by 1, so that just the first bit will be
             annotated.
@@ -280,7 +282,7 @@ class Decoder(srd.Decoder):
 
         """
         annots = hlp.compose_annot(bits[ann])
-        for bit in range(start, end or (start + 1)):
+        for bit in range(sb, eb or (sb + 1)):
             self.put(self.bits[bit][1], self.bits[bit][2],
                      self.out_ann, [ann, annots])
 
@@ -327,11 +329,6 @@ class Decoder(srd.Decoder):
             self.ssd = self.ss
             self.bytes.append(databyte)
 
-    def format_rw(self):
-        """Format read/write action."""
-        act = (AnnInfo.READ, AnnInfo.WRITE)[self.write]
-        return info[act]
-
     def handle_addr(self):
         """Process slave address."""
         if not self.bytes:
@@ -374,8 +371,8 @@ class Decoder(srd.Decoder):
         self.mtreg |= mtreg
         self.reg = Register.MTHIGH
         # Bits row - high bits
-        bit_min = MTregLowBits.MIN
-        bit_max = MTregLowBits.MAX + 1
+        bit_min = MTregHighBits.MIN
+        bit_max = MTregHighBits.MAX + 1
         self.putb(bit_min, bit_max, AnnBits.DATA)
         # Registers row
         ann = AnnRegs.MTHIGH
